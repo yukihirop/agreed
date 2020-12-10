@@ -3,6 +3,8 @@
 const isInclude = require("./isInclude");
 const url = require("url");
 const logger = require("../utils/logger");
+const { hasTemplate } = require("../template/hasTemplate");
+const tmplBind = require("../template/bind");
 
 const nullishStrings = ["undefined", "null", ""];
 
@@ -24,30 +26,50 @@ class Checker {
   static request(request, req, options) {
     const parsedUrl = url.parse(req.url);
     let similarity = 0;
+    // method
     let result = Checker.method(request.method, req.method);
-    similarity += result.similarity;
-    if (!Checker.validRequest(result, request, req, options.debug)) {
-      return { result: false, similarity, error: result.error };
+    similarity = result.similarity;
+    if (
+      !Checker.validRequest(result, request, req, options.debug) ||
+      similarity == 0
+    ) {
+      return { result: false, similarity: 0, error: result.error };
     }
+    // url
     result = Checker.url(request.pathToRegexp, parsedUrl.pathname, options);
-    similarity += result.similarity;
-    if (!Checker.validRequest(result, request, req, options.debug)) {
-      return { result: false, similarity, error: result.error };
+    similarity = result.similarity;
+    if (
+      !Checker.validRequest(result, request, req, options.debug) ||
+      similarity == 0
+    ) {
+      return { result: false, similarity: 0, error: result.error };
     }
+    // headers
     result = Checker.headers(request.headers, req.headers, options);
-    similarity += result.similarity;
-    if (!Checker.validRequest(result, request, req, options.debug)) {
-      return { result: false, similarity, error: result.error };
+    similarity = result.similarity;
+    if (
+      !Checker.validRequest(result, request, req, options.debug) ||
+      similarity == 0
+    ) {
+      return { result: false, similarity: 0, error: result.error };
     }
+    // query
     result = Checker.query(request.query, req.query, options);
-    similarity += result.similarity;
-    if (!Checker.validRequest(result, request, req, options.debug)) {
-      return { result: false, similarity, error: result.error };
+    similarity = result.similarity;
+    if (
+      !Checker.validRequest(result, request, req, options.debug) ||
+      similarity == 0
+    ) {
+      return { result: false, similarity: 0, error: result.error };
     }
+    // body
     result = Checker.body(request.body, req.body, options);
-    similarity += result.similarity;
-    if (!Checker.validRequest(result, request, req, options.debug)) {
-      return { result: false, similarity, error: result.error };
+    similarity = result.similarity;
+    if (
+      !Checker.validRequest(result, request, req, options.debug) ||
+      similarity == 0
+    ) {
+      return { result: false, similarity: 0, error: result.error };
     }
     return { result: true, similarity };
   }
@@ -148,6 +170,49 @@ class Checker {
         entryQuery
       )} but ${JSON.stringify(reqQuery)}`;
       result.similarity = 0;
+    }
+
+    const existEntryQuery = Object.keys(entryQuery).length > 0;
+    // e.g.) { q: "{:someQueryStrings }" }
+    
+    if (!!existEntryQuery) {
+      // e.g.) { id: "yosuke", someQueryStrings: "bar" }
+      // include path parameters
+      const entryParameters = options.values;
+      
+      // e.g.) reqQuery = { q: "bar" }
+      const isMatch = Object.keys(reqQuery).every((key) => {
+        if (entryQuery[key] != undefined) {
+          const tmpl = hasTemplate(entryQuery[key]);
+          const hasTmpl = tmpl !== null && tmpl.length > 0;
+          
+          // e.g.) {":someQueryStrings"} => someQueryStrings
+          // e.g.) {"someQueryStrings"} => someQueryStrings
+          const normalizedKey = hasTmpl
+            ? entryQuery[key].replace(/\{|\}|\:/g, "")
+            : entryQuery[key];
+          
+          const reqValue = reqQuery[key];
+          if (hasTmpl) {
+            // e.g.) { "someQueryStrings": "bar" }
+            const calcEntryParameters = tmplBind(entryQuery, reqQuery);
+            const calcEntryQueryValue = calcEntryParameters[normalizedKey];
+            const entryQueryValue = entryParameters[normalizedKey];
+            return (
+              calcEntryQueryValue == entryQueryValue &&
+              reqValue === entryQueryValue
+            );
+          } else {
+            // e.g.) entryQuery = { foo: "foo", bar: "bar" }
+            // e.g.) entryParameters = { id: "yosuke" }
+            const entryQueryValue = entryQuery[normalizedKey];
+            return reqValue === entryQueryValue;
+          }
+        } else {
+          return false;
+        }
+      });
+      result.similarity = isMatch ? 1 : 0;
     }
     return result;
   }
